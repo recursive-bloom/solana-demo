@@ -59,8 +59,8 @@ export async function getPayer(): Promise<Keypair> {
 
 export async function getPayers(): Promise<Keypair[]> {
   const filePaths = [
-    '/Users/huoyunlong/my-solana-wallet/alice.json',
-    '/Users/huoyunlong/my-solana-wallet/bob.json',
+    `${os.homedir()}/my-solana-wallet/alice.json`,
+    `${os.homedir()}/my-solana-wallet/bob.json`,
   ];
   return await Promise.all(
     filePaths.map(path => {
