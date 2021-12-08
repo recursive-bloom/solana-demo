@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-misused-promises */
+/* eslint-disable no-async-promise-executor */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
@@ -15,7 +17,7 @@ import fs from 'mz/fs';
 import path from 'path';
 import * as borsh from 'borsh';
 
-import {getPayer, getRpcUrl, createKeypairFromFile} from './utils';
+import {getPayer, getRpcUrl, createKeypairFromFile, getPayers} from './utils';
 
 /**
  * Connection to the network
@@ -27,6 +29,8 @@ let connection: Connection;
  */
 let payer: Keypair;
 
+let payers: Keypair[];
+
 /**
  * Hello world's program id
  */
@@ -36,6 +40,8 @@ let programId: PublicKey;
  * The public key of the account we are saying hello to
  */
 let greetedPubkey: PublicKey;
+
+let greetedPubKeys: PublicKey[];
 
 /**
  * Path to program files
@@ -98,7 +104,7 @@ export async function establishConnection(): Promise<void> {
  */
 export async function establishPayer(): Promise<void> {
   let fees = 0;
-  if (!payer) {
+  if (!payer || !payers) {
     const {feeCalculator} = await connection.getRecentBlockhash();
 
     // Calculate the cost to fund the greeter account
@@ -108,26 +114,46 @@ export async function establishPayer(): Promise<void> {
     fees += feeCalculator.lamportsPerSignature * 100; // wag
 
     payer = await getPayer();
+    payers = await getPayers();
+    // console.log('payers: ', payers);
   }
 
-  let lamports = await connection.getBalance(payer.publicKey);
-  if (lamports < fees) {
-    // If current balance is not enough to pay for fees, request an airdrop
-    const sig = await connection.requestAirdrop(
-      payer.publicKey,
-      fees - lamports,
+  for (let i = 0; i < payers.length; i++) {
+    const p = payers[i];
+    let lamports = await connection.getBalance(p.publicKey);
+    if (lamports < fees) {
+      // If current balance is not enough to pay for fees, request an airdrop
+      const sig = await connection.requestAirdrop(p.publicKey, fees - lamports);
+      await connection.confirmTransaction(sig);
+      lamports = await connection.getBalance(p.publicKey);
+    }
+    console.log(
+      'Using account',
+      p.publicKey.toBase58(),
+      'containing',
+      lamports / LAMPORTS_PER_SOL,
+      'SOL to pay for fees',
     );
-    await connection.confirmTransaction(sig);
-    lamports = await connection.getBalance(payer.publicKey);
   }
 
-  console.log(
-    'Using account',
-    payer.publicKey.toBase58(),
-    'containing',
-    lamports / LAMPORTS_PER_SOL,
-    'SOL to pay for fees',
-  );
+  // let lamports = await connection.getBalance(payer.publicKey);
+  // if (lamports < fees) {
+  //   // If current balance is not enough to pay for fees, request an airdrop
+  //   const sig = await connection.requestAirdrop(
+  //     payer.publicKey,
+  //     fees - lamports,
+  //   );
+  //   await connection.confirmTransaction(sig);
+  //   lamports = await connection.getBalance(payer.publicKey);
+  // }
+
+  // console.log(
+  //   'Using account',
+  //   payer.publicKey.toBase58(),
+  //   'containing',
+  //   lamports / LAMPORTS_PER_SOL,
+  //   'SOL to pay for fees',
+  // );
 }
 
 /**
@@ -162,73 +188,148 @@ export async function checkProgram(): Promise<void> {
 
   // Derive the address (public key) of a greeting account from the program so that it's easy to find later.
   const GREETING_SEED = 'hello';
-  greetedPubkey = await PublicKey.createWithSeed(
-    payer.publicKey,
-    GREETING_SEED,
-    programId,
+
+  // greetedPubkey = await PublicKey.createWithSeed(
+  //   payer.publicKey,
+  //   GREETING_SEED,
+  //   programId,
+  // );
+
+  greetedPubKeys = await Promise.all(
+    payers.map(payer => {
+      return PublicKey.createWithSeed(
+        payer.publicKey,
+        GREETING_SEED,
+        programId,
+      );
+    }),
   );
 
-  // Check if the greeting account has already been created
-  const greetedAccount = await connection.getAccountInfo(greetedPubkey);
-  if (greetedAccount === null) {
-    console.log(
-      'Creating account',
-      greetedPubkey.toBase58(),
-      'to say hello to',
-    );
-    const lamports = await connection.getMinimumBalanceForRentExemption(
-      GREETING_SIZE,
-    );
-
-    const transaction = new Transaction().add(
-      SystemProgram.createAccountWithSeed({
-        fromPubkey: payer.publicKey,
-        basePubkey: payer.publicKey,
-        seed: GREETING_SEED,
-        newAccountPubkey: greetedPubkey,
-        lamports,
-        space: GREETING_SIZE,
-        programId,
-      }),
-    );
-    await sendAndConfirmTransaction(connection, transaction, [payer]);
+  for (let i = 0; i < payers.length; i++) {
+    const payer = payers[i];
+    const greetedPubkey = greetedPubKeys[i];
+    console.log(payer.publicKey.toBase58());
+    console.log(greetedPubkey.toBase58());
   }
+
+  for (let i = 0; i < greetedPubKeys.length; i++) {
+    const p = payers[i];
+    const greetedPubkey = greetedPubKeys[i];
+    const greetedAccount = await connection.getAccountInfo(greetedPubkey);
+    if (greetedAccount === null) {
+      console.log(
+        'Creating account',
+        greetedPubkey.toBase58(),
+        'to say hello to',
+      );
+      const lamports = await connection.getMinimumBalanceForRentExemption(
+        GREETING_SIZE,
+      );
+
+      const transaction = new Transaction().add(
+        SystemProgram.createAccountWithSeed({
+          fromPubkey: p.publicKey,
+          basePubkey: p.publicKey,
+          seed: GREETING_SEED,
+          newAccountPubkey: greetedPubkey,
+          lamports,
+          space: GREETING_SIZE,
+          programId,
+        }),
+      );
+      await sendAndConfirmTransaction(connection, transaction, [p]);
+    }
+  }
+
+  // Check if the greeting account has already been created
+  // const greetedAccount = await connection.getAccountInfo(greetedPubkey);
+  // if (greetedAccount === null) {
+  //   console.log(
+  //     'Creating account',
+  //     greetedPubkey.toBase58(),
+  //     'to say hello to',
+  //   );
+  //   const lamports = await connection.getMinimumBalanceForRentExemption(
+  //     GREETING_SIZE,
+  //   );
+
+  //   const transaction = new Transaction().add(
+  //     SystemProgram.createAccountWithSeed({
+  //       fromPubkey: payer.publicKey,
+  //       basePubkey: payer.publicKey,
+  //       seed: GREETING_SEED,
+  //       newAccountPubkey: greetedPubkey,
+  //       lamports,
+  //       space: GREETING_SIZE,
+  //       programId,
+  //     }),
+  //   );
+  //   await sendAndConfirmTransaction(connection, transaction, [payer]);
+  // }
 }
 
 /**
  * Say hello
  */
 export async function sayHello(): Promise<void> {
-  console.log('Saying hello to', greetedPubkey.toBase58());
+  console.log('Saying hello to', greetedPubKeys[0].toBase58());
   const instruction = new TransactionInstruction({
-    keys: [{pubkey: greetedPubkey, isSigner: false, isWritable: true}],
+    keys: [{pubkey: greetedPubKeys[0], isSigner: false, isWritable: true}],
     programId,
     data: Buffer.alloc(0), // All instructions are hellos
   });
   await sendAndConfirmTransaction(
     connection,
     new Transaction().add(instruction),
-    [payer],
+    [payers[0]],
   );
+}
+
+export async function sayHellos(): Promise<void> {
+  for (let i = 0; i < payers.length; i++) {
+    const greetedPubkey = greetedPubKeys[i];
+    console.log('Saying hello to', greetedPubkey.toBase58());
+    const instruction = new TransactionInstruction({
+      keys: [
+        {
+          pubkey: greetedPubkey,
+          isSigner: false,
+          isWritable: true,
+        },
+      ],
+      programId,
+      data: Buffer.alloc(0), // All instructions are hellos
+    });
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(instruction),
+      [payers[i]],
+    );
+  }
 }
 
 /**
  * Report the number of times the greeted account has been said hello to
  */
 export async function reportGreetings(): Promise<void> {
-  const accountInfo = await connection.getAccountInfo(greetedPubkey);
-  if (accountInfo === null) {
-    throw 'Error: cannot find the greeted account';
+  for (let i = 0; i < payers.length; i++) {
+    // const payer = payers[i];
+    const greetedPubkey = greetedPubKeys[i];
+
+    const accountInfo = await connection.getAccountInfo(greetedPubkey);
+    if (accountInfo === null) {
+      throw 'Error: cannot find the greeted account';
+    }
+    const greeting = borsh.deserialize(
+      GreetingSchema,
+      GreetingAccount,
+      accountInfo.data,
+    );
+    console.log(
+      greetedPubkey.toBase58(),
+      'has been greeted',
+      greeting.counter,
+      'time(s)',
+    );
   }
-  const greeting = borsh.deserialize(
-    GreetingSchema,
-    GreetingAccount,
-    accountInfo.data,
-  );
-  console.log(
-    greetedPubkey.toBase58(),
-    'has been greeted',
-    greeting.counter,
-    'time(s)',
-  );
 }

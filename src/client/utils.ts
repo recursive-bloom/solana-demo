@@ -30,6 +30,7 @@ async function getConfig(): Promise<any> {
 export async function getRpcUrl(): Promise<string> {
   try {
     const config = await getConfig();
+    console.log('config', config);
     if (!config.json_rpc_url) throw new Error('Missing RPC URL');
     return config.json_rpc_url;
   } catch (err) {
@@ -54,6 +55,18 @@ export async function getPayer(): Promise<Keypair> {
     );
     return Keypair.generate();
   }
+}
+
+export async function getPayers(): Promise<Keypair[]> {
+  const filePaths = [
+    '/Users/huoyunlong/my-solana-wallet/alice.json',
+    '/Users/huoyunlong/my-solana-wallet/bob.json',
+  ];
+  return await Promise.all(
+    filePaths.map(path => {
+      return createKeypairFromFile(path);
+    }),
+  );
 }
 
 /**
