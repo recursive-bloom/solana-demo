@@ -7,12 +7,13 @@ use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Define the type of state stored in accounts
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct GreetingAccount {
     /// number of greetings
-    pub counter: u32,
+    pub counter: u128,
 }
 
 // Declare and export the program's entrypoint
@@ -38,9 +39,11 @@ pub fn process_instruction(
         return Err(ProgramError::IncorrectProgramId);
     }
 
+    let random = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+
     // Increment and store the number of times the account has been greeted
     let mut greeting_account = GreetingAccount::try_from_slice(&account.data.borrow())?;
-    greeting_account.counter += 1;
+    greeting_account.counter += random;
     greeting_account.serialize(&mut &mut account.data.borrow_mut()[..])?;
 
     msg!("Greeted {} time(s)!", greeting_account.counter);
